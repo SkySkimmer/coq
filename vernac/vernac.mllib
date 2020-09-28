@@ -14,6 +14,7 @@ Egramcoq
 Metasyntax
 DeclareUniv
 RetrieveObl
+ComArguments
 Declare
 ComHints
 Canonical
@@ -41,6 +42,5 @@ Assumptions
 Mltop
 Topfmt
 Loadpath
-ComArguments
 Vernacentries
 Vernacinterp
