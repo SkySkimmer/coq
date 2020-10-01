@@ -815,8 +815,7 @@ Section S.
         unfold cnf_ff.
         destruct f1 ; simpl ; try congruence.
         destruct c ; simpl ; try congruence.
-        destruct f1 ; try congruence.
-        reflexivity.
+        destruct f1 ; congruence.
       Qed.
 
 
