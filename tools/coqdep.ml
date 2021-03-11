@@ -120,6 +120,8 @@ let coqdep () =
 let _ =
   try
     coqdep ()
-  with CoqlibError msg ->
+  with
+  | CoqlibError msg ->
     eprintf "*** Error: %s@\n%!" msg;
     exit 1
+  | CErrors.UserError (_,msg) -> eprintf "Error: %s@\n%!" (Pp.string_of_ppcmds msg); exit 1
