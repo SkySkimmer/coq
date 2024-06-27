@@ -358,6 +358,12 @@ and of_constr_aux tbl local_env c =
 
 let dbg = CDebug.create ~name:"hconstr" ()
 
+let tree_size c =
+  let rec aux size c =
+    Constr.fold aux (size+1) c
+  in
+  aux 0 c
+
 let of_constr env c =
   let local_env = empty_env () in
   let local_env = iterate push_unknown_rel (Environ.nb_rel env) local_env in
@@ -365,9 +371,11 @@ let of_constr env c =
   let c = of_constr tbl local_env c in
   dbg Pp.(fun () ->
       let stats = Tbl.stats tbl in
+      let tree_size = tree_size (self c) in
       v 0 (
         str "hashes = " ++ int stats.Tbl.hashes ++ spc() ++
         str "bindings = " ++ int stats.Tbl.bindings ++ spc() ++
+        str "tree size = " ++ int tree_size ++ spc() ++
         str "most_collisions = " ++ int stats.Tbl.most_collisions
     )
     );
