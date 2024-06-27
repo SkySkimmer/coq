@@ -214,7 +214,8 @@ let infer_parameter ~sec_univs env entry =
 
 let infer_definition ~sec_univs env entry =
   let env, usubst, _, univs = process_universes env entry.definition_entry_universes in
-  let j = Typeops.infer env entry.definition_entry_body in
+  let hbody = HConstr.of_constr env entry.definition_entry_body in
+  let j = Typeops.infer_hconstr env hbody in
   let typ = match entry.definition_entry_type with
     | None ->
       Vars.subst_univs_level_constr usubst j.uj_type
@@ -224,9 +225,10 @@ let infer_definition ~sec_univs env entry =
       Vars.subst_univs_level_constr usubst tj.utj_val
   in
   let body = Vars.subst_univs_level_constr usubst j.uj_val in
+  let hbody = if body == j.uj_val then Some hbody else None in
   let def = Def body in
   let hyps = used_section_variables env entry.definition_entry_secctx (Some body) typ in
-  {
+  hbody, {
     const_hyps = hyps;
     const_univ_hyps = make_univ_hyps sec_univs;
     const_body = def;

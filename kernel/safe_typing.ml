@@ -662,11 +662,19 @@ let push_const_bytecode senv cb =
   let senv = set_vm_library vmtab senv in
   senv, cb
 
-let add_constant_aux senv (kn, cb) =
+let make_hbody = function
+  | None -> None
+  | Some hc -> Some (fun c ->
+      assert (c == HConstr.self hc);
+      HConstr.hcons hc)
+
+let add_constant_aux senv ?hbody (kn, cb) =
   let l = Constant.label kn in
   (* This is the only place where we hashcons the contents of a constant body *)
   let senv, cb = push_const_bytecode senv cb in
-  let cb = if sections_are_opened senv then cb else Declareops.hcons_const_body cb in
+  let cb = if sections_are_opened senv then cb else
+      Declareops.hcons_const_body ?hbody:(make_hbody hbody) cb
+  in
   let senv' = add_field (l,SFBconst cb) (C kn) senv in
   let senv'' = match cb.const_body with
     | Undef (Some lev) ->
@@ -864,11 +872,11 @@ let export_side_effects senv eff =
         let univs = Univ.ContextSet.union uctx univs in
         let env, cb =
           let ce = constant_entry_of_side_effect eff in
-          let cb = match ce with
+          let _hbody, cb = match ce with
             | DefinitionEff ce ->
               Constant_typing.infer_definition ~sec_univs env ce
             | OpaqueEff ce ->
-              infer_direct_opaque ~sec_univs env ce
+              None, infer_direct_opaque ~sec_univs env ce
           in
           let cb = compile_bytecode env cb in
           let eff = { eff with seff_body = cb } in
@@ -910,7 +918,7 @@ let export_private_constants eff senv =
 
 let add_constant l decl senv =
   let kn = Constant.make2 senv.modpath l in
-  let senv, cb =
+  let senv, (hbody, cb) =
     let sec_univs = Option.map Section.all_poly_univs senv.sections in
       match decl with
       | Entries.OpaqueEntry ce ->
@@ -921,23 +929,23 @@ let add_constant l decl senv =
         let nonce = Nonce.create () in
         let future_cst = HandleMap.add i (ctx, senv, nonce) senv.future_cst in
         let senv = { senv with future_cst } in
-        senv, { cb with const_body = OpaqueDef o }
+        senv, (None, { cb with const_body = OpaqueDef o })
       | Entries.DefinitionEntry entry ->
         senv, Constant_typing.infer_definition ~sec_univs senv.env entry
       | Entries.ParameterEntry entry ->
-        senv, Constant_typing.infer_parameter ~sec_univs senv.env entry
+        senv, (None, Constant_typing.infer_parameter ~sec_univs senv.env entry)
       | Entries.PrimitiveEntry entry ->
         let senv = match entry with
         | { Entries.prim_entry_content = CPrimitives.OT_type t; _ } ->
           if sections_are_opened senv then CErrors.anomaly (Pp.str "Primitive type not allowed in sections");
           add_retroknowledge (Retroknowledge.Register_type(t,kn)) senv
         | _ -> senv in
-        senv, Constant_typing.infer_primitive senv.env entry
+        senv, (None, Constant_typing.infer_primitive senv.env entry)
       | Entries.SymbolEntry entry ->
-        senv, Constant_typing.infer_symbol senv.env entry
+        senv, (None, Constant_typing.infer_symbol senv.env entry)
   in
   let cb = compile_bytecode senv.env cb in
-  let senv = add_constant_aux senv (kn, cb) in
+  let senv = add_constant_aux senv ?hbody (kn, cb) in
   kn, senv
 
 let add_constant ?typing_flags l decl senv =
@@ -1007,12 +1015,12 @@ let check_constraints uctx = function
 let add_private_constant l uctx decl senv : (Constant.t * private_constants) * safe_environment =
   let kn = Constant.make2 senv.modpath l in
   let senv = push_context_set ~strict:true uctx senv in
-    let cb =
+    let hbody, cb =
       let sec_univs = Option.map Section.all_poly_univs senv.sections in
       match decl with
       | OpaqueEff ce ->
         let () = assert (check_constraints uctx ce.Entries.opaque_entry_universes) in
-        infer_direct_opaque ~sec_univs senv.env ce
+        None, infer_direct_opaque ~sec_univs senv.env ce
       | DefinitionEff ce ->
         let () = assert (check_constraints uctx ce.Entries.definition_entry_universes) in
         Constant_typing.infer_definition ~sec_univs senv.env ce
@@ -1028,7 +1036,7 @@ let add_private_constant l uctx decl senv : (Constant.t * private_constants) * s
     { cb with const_body = Undef None }
   | Undef _ | Primitive _ | Symbol _ -> assert false
   in
-  let senv = add_constant_aux senv (kn, dcb) in
+  let senv = add_constant_aux senv ?hbody (kn, dcb) in
   let eff =
     let from_env = CEphemeron.create (Certificate.make senv) in
     let eff = {

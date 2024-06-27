@@ -39,7 +39,7 @@ val infer_parameter :
 
 val infer_definition :
   sec_univs:UVars.Instance.t option -> env -> definition_entry ->
-    ('a, unit) pconstant_body
+    HConstr.t option * ('a, unit) pconstant_body
 
 val infer_opaque :
   sec_univs:UVars.Instance.t option -> env -> 'a opaque_entry ->
