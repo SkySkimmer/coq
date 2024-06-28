@@ -838,7 +838,7 @@ let infer_direct_opaque ~sec_univs env ce =
   let cb, ctx = Constant_typing.infer_opaque ~sec_univs env ce in
   let body = ce.Entries.opaque_entry_body, Univ.ContextSet.empty in
   let handle _env c () = (c, Univ.ContextSet.empty, 0) in
-  let (c, u) = Constant_typing.check_delayed handle ctx (body, ()) in
+  let (_hbody, c, u) = Constant_typing.check_delayed handle ctx (body, ()) in
   (* No constraints can be generated, we set it empty everywhere *)
   let () = assert (is_empty_private u) in
   { cb with const_body = OpaqueDef c }
@@ -973,8 +973,11 @@ let check_opaque senv (i : Opaqueproof.opaque_handle) pf =
     in
     body, uctx, trusted
   in
-  let (c, ctx) = Constant_typing.check_delayed handle ty_ctx pf in
-  let c = Constr.hcons c in
+  let (hbody, c, ctx) = Constant_typing.check_delayed handle ty_ctx pf in
+  let c = match hbody with
+    | Some hbody -> assert (c == HConstr.self hbody); HConstr.hcons hbody
+    | None -> Constr.hcons c
+  in
   let ctx = match ctx with
   | Opaqueproof.PrivateMonomorphic u ->
     Opaqueproof.PrivateMonomorphic (Univ.hcons_universe_context_set u)

@@ -277,7 +277,8 @@ let check_delayed (type a) (handle : a effect_handler) tyenv (body : a proof_out
   in
   (* Note: non-trivial trusted side-effects only in monomorphic case *)
   let body,env,ectx = skip_trusted_seff valid_signatures body env in
-  let j = Typeops.infer env body in
+  let hbody = HConstr.of_constr env body in
+  let j = Typeops.infer_hconstr env hbody in
   let j = unzip ectx j in
   let _ = Typeops.judge_of_cast env j DEFAULTcast tyj in
   let declared =
@@ -287,7 +288,8 @@ let check_delayed (type a) (handle : a effect_handler) tyenv (body : a proof_out
   let () = assert (Id.Set.equal declared declared') in
   (* Note: non-trivial usubst only in polymorphic case *)
   let def = Vars.subst_univs_level_constr usubst j.uj_val in
-  def, univs
+  let hbody = if def == j.uj_val && List.is_empty ectx then Some hbody else None in
+  hbody, def, univs
 
 (*s Global and local constant declaration. *)
 
