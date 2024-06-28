@@ -634,6 +634,8 @@ module GenHCons(C:sig
     val self : t -> constr
     val refcount : t -> int
 
+    val via_hconstr : bool
+
     module Tbl : sig
       val find_opt : t -> (constr * int) option
       val add : t -> constr * int -> unit

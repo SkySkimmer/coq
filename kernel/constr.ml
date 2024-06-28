@@ -1334,12 +1334,16 @@ module GenHCons(C:sig
     val self : t -> constr
     val refcount : t -> int
 
+    val via_hconstr : bool
+
     module Tbl : sig
       val find_opt : t -> (constr * int) option
       val add : t -> constr * int -> unit
     end
   end) = struct
 open C
+
+let steps = ref 0
 
 let rec hash_term (t : t) =
   match kind t with
@@ -1456,6 +1460,7 @@ and sh_rec_main t =
   (HashsetTerm.repr h (T y) term_table, h)
 
 and sh_rec t =
+  incr steps;
   if refcount t = 1 then sh_rec_main t
   else match Tbl.find_opt t with
     | Some res -> res
@@ -1479,11 +1484,14 @@ and hash_term_array ct t =
 let hcons t = NewProfile.profile "Constr.hcons" (fun () -> fst (sh_rec t)) ()
 
 let hcons t =
+  steps := 0;
   let t = hcons t in
   dbg Pp.(fun () ->
       let open Hashset in
       let stats = HashsetTerm.stats term_table in
       v 0 (
+        str "via hconstr = " ++ bool via_hconstr ++ spc() ++
+        str "steps = " ++ int !steps ++ spc() ++
         str "num_bindings = " ++ int stats.num_bindings ++ spc() ++
         str "num_buckets = " ++ int stats.num_buckets ++ spc() ++
         str "max_bucket_length = " ++ int stats.max_bucket_length
@@ -1498,6 +1506,8 @@ module HCons = GenHCons(struct
     let kind = kind
     let self x = x
     let refcount _ = 1
+
+    let via_hconstr = false
 
     module Tbl = struct
       let find_opt _ = None

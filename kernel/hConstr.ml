@@ -392,6 +392,7 @@ let hcons x =
       let kind = kind
       let self = self
       let refcount = refcount
+        let via_hconstr = true
       module Tbl = struct
         let find_opt x = Tbl.find_opt tbl x
         let add x y = Tbl.add tbl x y
