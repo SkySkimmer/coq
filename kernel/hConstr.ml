@@ -320,14 +320,25 @@ let of_kind_nohashcons = function
   let unbound_rels = kind_unbound_rels kind in
   { self; kind; hash; isRel = 0; unbound_rels; refcount = 1 }
 
-let eq_leaf c c' = match kind c, c'.kind with
+let eq_leaf c c' = match ConstrSharing.kind c, c'.kind with
   | Var i, Var i' -> Id.equal i i'
   | Const (c,u), Const (c',u') -> Constant.SyntacticOrd.equal c c' && UVars.Instance.equal u u'
   | Ind (i,u), Ind (i',u') -> Ind.SyntacticOrd.equal i i' && UVars.Instance.equal u u'
   | Construct (c,u), Construct (c',u') -> Construct.SyntacticOrd.equal c c' && UVars.Instance.equal u u'
   | _ -> false
 
-let nonrel_leaf tbl c = match kind c with
+let compatible local_env v =
+  let rec aux local_env rels = match rels with
+    | SList.Nil -> true
+    | SList.Cons (x,tl) ->
+      Int.equal x (Range.hd local_env)
+      && aux (Range.tl local_env) tl
+    | SList.Default (n,tl) ->
+      aux (Range.skipn n local_env) tl
+  in
+  aux local_env.rels v.unbound_rels
+
+let nonrel_leaf tbl c = match ConstrSharing.kind c with
   | Rel _ -> None
   | Var _ | Const _ | Ind _ | Construct _ as k ->
     let h = hash_kind k in
@@ -338,13 +349,28 @@ let steps = ref 0
 
 let rec of_constr tbl local_env c =
   incr steps;
-  match nonrel_leaf tbl c with
-  | Some v -> v
+  let shared =
+    if ConstrSharing.refcount c = 1 then None
+    else match Int.Map.find_opt (ConstrSharing.uid c) !(fst tbl) with
+      | None -> None
+      | Some vs ->
+        List.find_map (fun v ->
+            if compatible local_env v then Some v else None)
+          vs
+  in
+  match shared with
+  | Some v -> v.refcount <- v.refcount + 1; v
+  | None ->
+  let v = match nonrel_leaf (snd tbl) c with
+  | Some v -> v.refcount <- v.refcount + 1; v
   | None ->
   let c =
     let kind = of_constr_aux tbl local_env c in
     let self = kind_to_constr kind in
-    let self = if hasheq_kind (Constr.kind self) (Constr.kind c) then c else self in
+    let self = if hasheq_kind (Constr.kind self) (Constr.kind @@ ConstrSharing.self c)
+      then ConstrSharing.self c
+      else self
+    in
     let hash = hash_kind kind in
     let isRel, hash, unbound_rels = match kind with
       | Rel n ->
@@ -355,12 +381,21 @@ let rec of_constr tbl local_env c =
     in
     { self; kind; hash; isRel; unbound_rels; refcount = 1 }
   in
-  match Tbl.find_opt tbl c with
+  match Tbl.find_opt (snd tbl) c with
   | Some c' -> c'.refcount <- c'.refcount + 1; c'
-  | None -> Tbl.add tbl c c; c
+  | None -> Tbl.add (snd tbl) c c; c
+  in
+  if ConstrSharing.refcount c = 1 then v
+  else begin
+    fst tbl := Int.Map.update (ConstrSharing.uid c) (function
+        | None -> Some [v]
+        | Some l -> Some (v:: l))
+        !(fst tbl);
+    v
+  end
 
 and of_constr_aux tbl local_env c =
-  match kind c with
+  match ConstrSharing.kind c with
   | Var i ->
     let i = Id.hcons i in
     Var i
@@ -461,11 +496,13 @@ let tree_size c =
 let of_constr env c =
   let local_env = empty_env () in
   let local_env = iterate push_unknown_rel (Environ.nb_rel env) local_env in
-  let tbl = Tbl.create 57 in
+  let tbl = ref Int.Map.empty, Tbl.create 57 in
   steps := 0;
+  let c = ConstrSharing.of_constr c in
   let c = of_constr tbl local_env c in
   dbg Pp.(fun () ->
-      let stats = Tbl.stats tbl in
+      let stats = Tbl.stats (snd tbl) in
+      (* todo stats for [fst tbl] *)
       let tree_size = tree_size (self c) in
       v 0 (
         str "steps = " ++ int !steps ++ spc() ++
