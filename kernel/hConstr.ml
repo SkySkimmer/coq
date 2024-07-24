@@ -320,23 +320,31 @@ let of_kind_nohashcons = function
   let unbound_rels = kind_unbound_rels kind in
   { self; kind; hash; isRel = 0; unbound_rels; refcount = 1 }
 
+module UBRelKey = struct
+  type t = int SList.t
+  let compare x y = SList.compare Int.compare x y
+end
+
+module UBRelMap = Map.Make(UBRelKey)
+
+(* v tells which rels are bound *)
+let ubrels_from_env (type a) local_env (v:a SList.t) =
+  let rec aux local_env rels = match rels with
+    | SList.Nil -> SList.empty
+    | SList.Cons (_,tl) ->
+      SList.cons (Range.hd local_env)
+        (aux (Range.tl local_env) tl)
+    | SList.Default (n,tl) ->
+      SList.defaultn n (aux (Range.skipn n local_env) tl)
+  in
+  aux local_env.rels v
+
 let eq_leaf c c' = match ConstrSharing.kind c, c'.kind with
   | Var i, Var i' -> Id.equal i i'
   | Const (c,u), Const (c',u') -> Constant.SyntacticOrd.equal c c' && UVars.Instance.equal u u'
   | Ind (i,u), Ind (i',u') -> Ind.SyntacticOrd.equal i i' && UVars.Instance.equal u u'
   | Construct (c,u), Construct (c',u') -> Construct.SyntacticOrd.equal c c' && UVars.Instance.equal u u'
   | _ -> false
-
-let compatible local_env v =
-  let rec aux local_env rels = match rels with
-    | SList.Nil -> true
-    | SList.Cons (x,tl) ->
-      Int.equal x (Range.hd local_env)
-      && aux (Range.tl local_env) tl
-    | SList.Default (n,tl) ->
-      aux (Range.skipn n local_env) tl
-  in
-  aux local_env.rels v.unbound_rels
 
 let nonrel_leaf tbl c = match ConstrSharing.kind c with
   | Rel _ -> None
@@ -354,9 +362,11 @@ let rec of_constr tbl local_env c =
     else match Int.Map.find_opt (ConstrSharing.uid c) !(fst tbl) with
       | None -> None
       | Some vs ->
-        List.find_map (fun v ->
-            if compatible local_env v then Some v else None)
-          vs
+        let key =
+          let key', _ = UBRelMap.choose vs in
+          ubrels_from_env local_env key'
+        in
+        UBRelMap.find_opt key vs
   in
   match shared with
   | Some v -> v.refcount <- v.refcount + 1; v
@@ -388,8 +398,8 @@ let rec of_constr tbl local_env c =
   if ConstrSharing.refcount c = 1 then v
   else begin
     fst tbl := Int.Map.update (ConstrSharing.uid c) (function
-        | None -> Some [v]
-        | Some l -> Some (v:: l))
+        | None -> Some (UBRelMap.singleton v.unbound_rels v)
+        | Some l -> Some (UBRelMap.add v.unbound_rels v l))
         !(fst tbl);
     v
   end
