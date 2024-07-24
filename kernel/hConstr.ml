@@ -263,7 +263,10 @@ let nonrel_leaf tbl c = match kind c with
     Tbl.raw_find tbl h (fun c' -> eq_leaf c c')
   | _ -> None
 
+let steps = ref 0
+
 let rec of_constr tbl local_env c =
+  incr steps;
   match nonrel_leaf tbl c with
   | Some v -> v
   | None ->
@@ -388,11 +391,13 @@ let of_constr env c =
   let local_env = empty_env () in
   let local_env = iterate push_unknown_rel (Environ.nb_rel env) local_env in
   let tbl = Tbl.create 57 in
+  steps := 0;
   let c = of_constr tbl local_env c in
   dbg Pp.(fun () ->
       let stats = Tbl.stats tbl in
       let tree_size = tree_size (self c) in
       v 0 (
+        str "steps = " ++ int !steps ++ spc() ++
         str "hashes = " ++ int stats.Tbl.hashes ++ spc() ++
         str "bindings = " ++ int stats.Tbl.bindings ++ spc() ++
         str "tree size = " ++ int tree_size ++ spc() ++
