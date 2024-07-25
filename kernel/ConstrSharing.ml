@@ -419,8 +419,8 @@ let parse chan =
   (ans.(0), memory)
 
 let repr v =
-  let s = Marshal.to_string v [] in
-  parse s
+  let s = NewProfile.profile "constrsharing.marshal" (fun () -> Marshal.to_string v []) () in
+  NewProfile.profile "constrsharing.repr" (fun () -> parse s) ()
 
 type t = {
   uid : int;
@@ -598,8 +598,8 @@ let do_constr memory c data =
   do_constr c data
 
 let of_constr c =
-  NewProfile.profile "constrsharing" (fun () ->
-      let data, memory = repr c in
+  let data, memory = repr c in
+  NewProfile.profile "constrsharing.do_constr" (fun () ->
       do_constr memory c data)
     ()
 
