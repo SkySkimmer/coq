@@ -346,20 +346,14 @@ let eq_leaf c c' = match ConstrSharing.kind c, c'.kind with
   | Construct (c,u), Construct (c',u') -> Construct.SyntacticOrd.equal c c' && UVars.Instance.equal u u'
   | _ -> false
 
-let nonrel_leaf tbl c = match ConstrSharing.kind c with
+let qfind local_env (stbl,tbl) c = match ConstrSharing.kind c with
   | Rel _ -> None
   | Var _ | Const _ | Ind _ | Construct _ as k ->
     let h = hash_kind k in
     Tbl.raw_find tbl h (fun c' -> eq_leaf c c')
-  | _ -> None
-
-let steps = ref 0
-
-let rec of_constr tbl local_env c =
-  incr steps;
-  let shared =
+  | _ ->
     if ConstrSharing.refcount c = 1 then None
-    else match Int.Map.find_opt (ConstrSharing.uid c) !(fst tbl) with
+    else match Int.Map.find_opt (ConstrSharing.uid c) !(stbl) with
       | None -> None
       | Some vs ->
         let key =
@@ -367,14 +361,14 @@ let rec of_constr tbl local_env c =
           ubrels_from_env local_env key'
         in
         UBRelMap.find_opt key vs
-  in
-  match shared with
+let steps = ref 0
+
+let rec of_constr tbl local_env c =
+  incr steps;
+  match qfind local_env tbl c with
   | Some v -> v.refcount <- v.refcount + 1; v
   | None ->
-  let v = match nonrel_leaf (snd tbl) c with
-  | Some v -> v.refcount <- v.refcount + 1; v
-  | None ->
-  let c =
+  let hc =
     let kind = of_constr_aux tbl local_env c in
     let self = kind_to_constr kind in
     let self = if hasheq_kind (Constr.kind self) (Constr.kind @@ ConstrSharing.self c)
@@ -391,17 +385,17 @@ let rec of_constr tbl local_env c =
     in
     { self; kind; hash; isRel; unbound_rels; refcount = 1 }
   in
-  match Tbl.find_opt (snd tbl) c with
+  let hc = match Tbl.find_opt (snd tbl) hc with
   | Some c' -> c'.refcount <- c'.refcount + 1; c'
-  | None -> Tbl.add (snd tbl) c c; c
+  | None -> Tbl.add (snd tbl) hc hc; hc
   in
-  if ConstrSharing.refcount c = 1 then v
+  if ConstrSharing.refcount c = 1 || match hc.kind with Rel _ | Var _ | Const _ | Ind _ | Construct _ -> true | _ -> false then hc
   else begin
     fst tbl := Int.Map.update (ConstrSharing.uid c) (function
-        | None -> Some (UBRelMap.singleton v.unbound_rels v)
-        | Some l -> Some (UBRelMap.add v.unbound_rels v l))
+        | None -> Some (UBRelMap.singleton hc.unbound_rels hc)
+        | Some l -> Some (UBRelMap.add hc.unbound_rels hc l))
         !(fst tbl);
-    v
+    hc
   end
 
 and of_constr_aux tbl local_env c =
@@ -512,6 +506,12 @@ let of_constr env c =
   let c = of_constr tbl local_env c in
   dbg Pp.(fun () ->
       let stats = Tbl.stats (snd tbl) in
+      let shared_count, shared_bindings, shared_mcolls =
+        Int.Map.fold (fun _ m (shared_count,shared_bindings,shared_mcolls) ->
+            let len = UBRelMap.cardinal m in
+            shared_count+1, shared_bindings+len, max shared_mcolls len)
+          !(fst tbl) (0,0,0)
+      in
       (* todo stats for [fst tbl] *)
       let tree_size = tree_size (self c) in
       v 0 (
@@ -519,7 +519,10 @@ let of_constr env c =
         str "hashes = " ++ int stats.Tbl.hashes ++ spc() ++
         str "bindings = " ++ int stats.Tbl.bindings ++ spc() ++
         str "tree size = " ++ int tree_size ++ spc() ++
-        str "most_collisions = " ++ int stats.Tbl.most_collisions
+        str "most_collisions = " ++ int stats.Tbl.most_collisions ++ spc() ++
+        str "pre shared constrs = " ++ int shared_count ++ spc() ++
+        str "pre shared bindings = " ++ int shared_bindings ++ spc() ++
+        str "pre shared most colllisions = " ++ int shared_mcolls
     )
     );
   c
