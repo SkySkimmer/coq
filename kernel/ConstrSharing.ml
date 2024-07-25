@@ -353,8 +353,12 @@ let parse_object chan =
   | CODE_CUSTOM_LEN
     -> Printf.eprintf "Unhandled code %04x\n%!" data; assert false
 
+let dbg = CDebug.create ~name:"constrsharing" ()
+
 let parse chan =
   let chan = chan, ref 0 in
+  let blocks = ref 0 in
+  let steps = ref 0 in
   let (magic, _, _, _, size) = parse_header chan in
   let () = assert (magic = magic_number) in
   (* we only put blocks in memory as nothing else can contain constr
@@ -382,6 +386,7 @@ let parse chan =
     let data = Atm tag in
     data, None
   | RBlock (tag, len) ->
+    incr blocks;
     let data = Ptr !current_object in
     let nblock = Array.make len (Atm (-1)) in
     let () = LargeArray.set memory !current_object (tag, nblock) in
@@ -406,6 +411,7 @@ let parse chan =
       | [] -> ()
       | (block, off) :: accu -> fill block off accu
     else
+      let () = incr steps in
       let data, nobj = fill_obj (parse_object chan) in
       let () = block.(off) <- data in
       let block, off, accu = match nobj with
@@ -416,6 +422,12 @@ let parse chan =
   in
   let ans = [|Atm (-1)|] in
   let () = fill ans 0 [] in
+  dbg Pp.(fun () ->
+      v 0 (
+        str "marshalled string size = " ++ int (String.length (fst chan)) ++ spc() ++
+        str "repr steps = " ++ int !steps ++ spc() ++
+        str "blocks = " ++ int !blocks ++ spc()
+      ));
   (ans.(0), memory)
 
 let repr v =
@@ -430,6 +442,7 @@ type t = {
 }
 
 let do_constr memory c data =
+  let steps = ref 0 in
   let get_ptr = function
     | Int _ | Atm _ | Fun _ -> assert false
     | Ptr p -> LargeArray.get memory p
@@ -460,6 +473,7 @@ let do_constr memory c data =
       match Int.Map.find_opt n !seen with
       | Some v -> v.refcount <- v.refcount + 1; v
       | None ->
+        let () = incr steps in
         let tag, vals = LargeArray.get memory n in
         let k = fresh_constr ~tag vals c in
         let c = { uid = n; refcount = 1; self = c; kind = k } in
@@ -595,7 +609,9 @@ let do_constr memory c data =
     (nas, tys, bdys)
 
   in
-  do_constr c data
+  let c = do_constr c data in
+  dbg Pp.(fun () -> str "do_constr steps = " ++ int !steps);
+  c
 
 let of_constr c =
   let data, memory = repr c in
