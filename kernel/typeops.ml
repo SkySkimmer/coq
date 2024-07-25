@@ -632,9 +632,14 @@ let push_rec_types (lna,typarray,_) env =
   let ctxt = Array.map2_i (fun i na t -> RelDecl.LocalAssum (na, lift i t)) lna typarray in
   Array.fold_left (fun e assum -> push_rel assum e) env ctxt
 
+let is_trivial c = match HConstr.kind c with
+  | Rel _ | Var _ -> true
+  | Const (_,u) | Ind (_,u) | Construct (_,u) -> UVars.Instance.is_empty u
+  | _ -> false
+
 (* The typing machine. *)
 let rec execute tbl env cstr =
-  if Int.equal (HConstr.refcount cstr) 1 then execute_aux tbl env cstr
+  if Int.equal (HConstr.refcount cstr) 1 || is_trivial cstr then execute_aux tbl env cstr
   else begin match HConstr.Tbl.find_opt tbl cstr with
     | Some v -> v
     | None ->
