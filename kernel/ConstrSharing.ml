@@ -425,6 +425,7 @@ let parse chan =
   dbg Pp.(fun () ->
       v 0 (
         str "marshalled string size = " ++ int (String.length (fst chan)) ++ spc() ++
+        str "memory size = " ++ int size ++ spc() ++
         str "repr steps = " ++ int !steps ++ spc() ++
         str "blocks = " ++ int !blocks ++ spc()
       ));
