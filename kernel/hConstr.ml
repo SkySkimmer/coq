@@ -503,7 +503,10 @@ let of_constr env c =
   let tbl = ref Int.Map.empty, Tbl.create 57 in
   steps := 0;
   let c = ConstrSharing.of_constr c in
-  let c = of_constr tbl local_env c in
+  let c = NewProfile.profile "HConstr.of_constr" (fun () ->
+      of_constr tbl local_env c)
+      ()
+  in
   dbg Pp.(fun () ->
       let stats = Tbl.stats (snd tbl) in
       let shared_count, shared_bindings, shared_mcolls =
@@ -526,8 +529,6 @@ let of_constr env c =
     )
     );
   c
-
-let of_constr env c = NewProfile.profile "HConstr.of_constr" (fun () -> of_constr env c) ()
 
 let kind x = x.kind
 
