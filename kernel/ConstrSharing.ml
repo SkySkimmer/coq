@@ -8,6 +8,48 @@
 (*         *     (see LICENSE file for the text of the license)         *)
 (************************************************************************)
 
+module LargeArray :
+sig
+  type 'a t
+  val make : int -> 'a -> 'a t
+  val get : 'a t -> int -> 'a
+  val set : 'a t -> int -> 'a -> unit
+end =
+struct
+
+  let max_length = Sys.max_array_length
+
+  type 'a t = 'a array array * 'a array
+  (** Invariants:
+      - All subarrays of the left array have length [max_length].
+      - The right array has length < [max_length].
+  *)
+
+  let make n x =
+    let k = n / max_length in
+    let r = n mod max_length in
+    let vl = Array.init k (fun _ -> Array.make max_length x) in
+    let vr = Array.make r x in
+    (vl, vr)
+
+  let get (vl, vr) n =
+    let k = n / max_length in
+    let r = n mod max_length in
+    let len = Array.length vl in
+    if k < len then vl.(k).(r)
+    else if k == len then vr.(r)
+    else invalid_arg "index out of bounds"
+
+  let set (vl, vr) n x =
+    let k = n / max_length in
+    let r = n mod max_length in
+    let len = Array.length vl in
+    if k < len then vl.(k).(r) <- x
+    else if k == len then vr.(r) <- x
+    else invalid_arg "index out of bounds"
+
+end
+
 let prefix_small_block =         0x80
 let prefix_small_int =           0x40
 let prefix_small_string =        0x20
@@ -313,7 +355,7 @@ let parse_object chan =
 
 let parse chan =
   let chan = chan, ref 0 in
-  let (magic, _, _, _, _) = parse_header chan in
+  let (magic, _, _, _, size) = parse_header chan in
   let () = assert (magic = magic_number) in
   (* we only put blocks in memory as nothing else can contain constr
      however to be robust to possible untyped sharings
@@ -321,7 +363,7 @@ let parse chan =
      we do need to put every encountered block in memory
      even if by typing it shouldn't contain constrs.
   *)
-  let memory = ref Int.Map.empty in
+  let memory = LargeArray.make size ((-1), [||]) in
   let current_object = ref 0 in
 
   let fill_obj = function
@@ -342,7 +384,7 @@ let parse chan =
   | RBlock (tag, len) ->
     let data = Ptr !current_object in
     let nblock = Array.make len (Atm (-1)) in
-    let () = memory := Int.Map.add !current_object (tag, nblock) !memory in
+    let () = LargeArray.set memory !current_object (tag, nblock) in
     let () = incr current_object in
     data, Some nblock
   | RCode addr ->
@@ -374,7 +416,7 @@ let parse chan =
   in
   let ans = [|Atm (-1)|] in
   let () = fill ans 0 [] in
-  (ans.(0), !memory)
+  (ans.(0), memory)
 
 let repr v =
   let s = Marshal.to_string v [] in
@@ -390,9 +432,7 @@ type t = {
 let do_constr memory c data =
   let get_ptr = function
     | Int _ | Atm _ | Fun _ -> assert false
-    | Ptr p -> match Int.Map.find_opt p memory with
-      | None -> assert false
-      | Some v -> v
+    | Ptr p -> LargeArray.get memory p
   in
   let get_ptr_vals ~tag ~len p =
     let tag', v = get_ptr p in
@@ -419,13 +459,12 @@ let do_constr memory c data =
     | Ptr n ->
       match Int.Map.find_opt n !seen with
       | Some v -> v.refcount <- v.refcount + 1; v
-      | None -> match Int.Map.find_opt n memory with
-        | None -> assert false
-        | Some (tag, vals) ->
-          let k = fresh_constr ~tag vals c in
-          let c = { uid = n; refcount = 1; self = c; kind = k } in
-          seen := Int.Map.add n c !seen;
-          c
+      | None ->
+        let tag, vals = LargeArray.get memory n in
+        let k = fresh_constr ~tag vals c in
+        let c = { uid = n; refcount = 1; self = c; kind = k } in
+        seen := Int.Map.add n c !seen;
+        c
 
   and fresh_constr ~tag vals c =
     let open Constr in
@@ -533,13 +572,13 @@ let do_constr memory c data =
     match sl, slval with
     | Nil, Int 0 -> SList.empty
     | Cons (c, tl), Ptr p ->
-      let tag, vals = Int.Map.get p memory in
+      let tag, vals = LargeArray.get memory p in
       assert (tag = 0 && Array.length vals = 2);
       let c = do_constr c vals.(0) in
       let tl = do_constr_slist tl vals.(1) in
       SList.cons c tl
     | Default (n, tl), Ptr p ->
-      let tag, vals = Int.Map.get p memory in
+      let tag, vals = LargeArray.get memory p in
       assert (tag = 1 && Array.length vals = 2);
       let tl = do_constr_slist tl vals.(1) in
       SList.defaultn n tl
