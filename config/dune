@@ -36,6 +36,6 @@
    %{project_root}/dev/header.c
    ; Needed to generate include lists for coq_makefile
    plugin_list
-  ; used for the prefix
+  ; used for the prefix (XXX is this still used with -relocatable?)
   (env_var PWD))
- (action (chdir %{project_root} (run %{project_root}/tools/configure/configure.exe -quiet -prefix ../install/default))))
+ (action (chdir %{project_root} (run %{project_root}/tools/configure/configure.exe -quiet -relocatable))))
