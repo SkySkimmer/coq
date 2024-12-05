@@ -24,3 +24,5 @@ val set_warn_deprecated_coq_var : (rocq:string -> coq:string -> unit) -> unit
 
 val check_file_else :
   dir:string -> file:string -> (unit -> string) -> string
+
+val relocate : Coq_config.relocatable_path -> string
