@@ -134,7 +134,7 @@ let rec make_anonymous_conclusion_flexible ind =
     end
   | _ -> None
 
-type syntax_allows_template_poly = SyntaxAllowsTemplatePoly | SyntaxNoTemplatePoly
+type 'a syntax_allows_template_poly = SyntaxAllowsTemplatePoly of 'a | SyntaxNoTemplatePoly
 
 let intern_ind_arity env sigma ind =
   let c = intern_gen IsType env sigma ind.ind_arity in
@@ -143,7 +143,7 @@ let intern_ind_arity env sigma ind =
     | None -> check_type_conclusion c, c
     | Some c -> true, c
   in
-  let template_syntax = if pseudo_poly then SyntaxAllowsTemplatePoly else SyntaxNoTemplatePoly in
+  let template_syntax = if pseudo_poly then SyntaxAllowsTemplatePoly () else SyntaxNoTemplatePoly in
   (constr_loc ind.ind_arity, c, impls, template_syntax)
 
 let pretype_ind_arity ~unconstrained_sorts env sigma (loc, c, impls, template_syntax) =
@@ -381,6 +381,7 @@ let get_arity c =
 let non_template_levels ~params entry =
   let ctx, u = Term.destArity entry.mind_entry_arity in
   let add_levels c levels = Univ.Level.Set.union levels (CVars.universes_of_constr c) in
+  let levels = Univ.Level.Set.empty in
   let fold_params levels = function
     | LocalDef (_, b, t) -> add_levels b (add_levels t levels)
     | LocalAssum (_, t) ->
@@ -391,7 +392,7 @@ let non_template_levels ~params entry =
   (* Levels in LocalDef params, on the left of the context in LocalAssum params,
      in the indices and in the constructor types are not allowed to be template.
      (partly to guarantee Irrelevant variance, and partly to simplify universe substitution code) *)
-  let levels = List.fold_left fold_params Univ.Level.Set.empty params in
+  let levels = List.fold_left fold_params levels params in
   let levels = add_levels (Term.mkArity (ctx,Sorts.prop)) levels in
   let levels = List.fold_left (fun levels c -> add_levels c levels)
       levels entry.mind_entry_lc
@@ -452,7 +453,7 @@ let template_polymorphic_univs uctx params entry =
 
 let template_polymorphism_candidate uctx params entry template_syntax = match template_syntax with
 | SyntaxNoTemplatePoly -> Univ.Level.Set.empty
-| SyntaxAllowsTemplatePoly ->
+| SyntaxAllowsTemplatePoly pseudo_poly ->
   let univs = template_polymorphic_univs uctx params entry in
   univs
 
@@ -469,28 +470,31 @@ let warn_no_template_universe =
   CWarnings.create ~name:"no-template-universe"
     (fun () -> Pp.str "This inductive type has no template universes.")
 
+let make_template univs = function
+  | SyntaxNoTemplatePoly -> assert false
+  | SyntaxAllowsTemplatePoly pseudo_sort_poly ->
+    Template_ind_entry { univs; pseudo_sort_poly }
+
 let compute_template_inductive ~user_template ~ctx_params ~univ_entry entry template_syntax =
 match user_template, univ_entry with
+| (Some false | None), UState.Polymorphic_entry uctx ->
+  Polymorphic_ind_entry uctx, Univ.ContextSet.empty
+| Some true, UState.Polymorphic_entry _ ->
+  user_err Pp.(strbrk "Template-polymorphism and universe polymorphism are not compatible.")
 | Some false, UState.Monomorphic_entry uctx ->
   Monomorphic_ind_entry, uctx
-| Some false, UState.Polymorphic_entry uctx ->
-  Polymorphic_ind_entry uctx, Univ.ContextSet.empty
 | Some true, UState.Monomorphic_entry uctx ->
   let template_universes = template_polymorphism_candidate uctx ctx_params entry template_syntax in
   let template, global = split_universe_context template_universes uctx in
   let () = if Univ.Level.Set.is_empty (fst template) then warn_no_template_universe () in
-  Template_ind_entry template, global
-| Some true, UState.Polymorphic_entry _ ->
-  user_err Pp.(strbrk "Template-polymorphism and universe polymorphism are not compatible.")
-| None, UState.Polymorphic_entry uctx ->
-  Polymorphic_ind_entry uctx, Univ.ContextSet.empty
+  make_template template template_syntax, global
 | None, UState.Monomorphic_entry uctx ->
   let template_candidate = template_polymorphism_candidate uctx ctx_params entry template_syntax in
   let has_template = not @@ Univ.Level.Set.is_empty template_candidate in
   let template = should_auto_template entry.mind_entry_typename has_template in
   if template then
     let template, global = split_universe_context template_candidate uctx in
-    Template_ind_entry template, global
+    make_template template template_syntax, global
   else Monomorphic_ind_entry, uctx
 
 let check_param = function
@@ -500,14 +504,14 @@ let check_param = function
 | CLocalPattern {CAst.loc} ->
   Loc.raise ?loc (Gramlib.Grammar.Error "pattern with quote not allowed here")
 
-let restrict_inductive_universes ~lbound sigma ctx_params arities constructors =
+let restrict_inductive_universes sigma ctx_params arities constructors =
   let merge_universes_of_constr c =
     Univ.Level.Set.union (snd (EConstr.universes_of_constr sigma (EConstr.of_constr c))) in
   let uvars = Univ.Level.Set.empty in
   let uvars = Context.Rel.(fold_outside (Declaration.fold_constr merge_universes_of_constr) ctx_params ~init:uvars) in
   let uvars = List.fold_right merge_universes_of_constr arities uvars in
   let uvars = List.fold_right (fun (_,ctypes) -> List.fold_right merge_universes_of_constr ctypes) constructors uvars in
-  Evd.restrict_universe_context ~lbound sigma uvars
+  Evd.restrict_universe_context sigma uvars
 
 let check_trivial_variances variances =
   Array.iter (function
@@ -528,6 +532,36 @@ let variance_of_entry ~cumulative ~variances uctx =
       assert (lvs <= lus);
       Some (Array.append variances (Array.make (lus - lvs) None))
 
+let pseudo_sort_poly sigma ctx_params arity =
+  let quality_bounded_from_below =
+    List.fold_left (fun levels -> function
+        | LocalAssum (_,t) ->
+          let _, t = decompose_prod_decls sigma t in
+          begin match ESorts.kind sigma (destSort sigma t) with
+          | exception Constr.DestKO -> (* not a syntactic sort *) levels
+          | SProp | Prop | Set -> levels
+          | QSort _ -> levels
+          | Type u -> match Univ.Universe.level u with
+            | None -> levels
+            | Some u -> Univ.Level.Set.add u levels
+          end
+        | LocalDef _ -> levels)
+      Univ.Level.Set.empty
+      ctx_params
+  in
+  (* XXX maybe should be anomaly (ie directly call destArity) *)
+  let open Declarations in
+  if not @@ isArity sigma arity then TemplateUnivOnly
+  else
+    let ctx, s = destArity sigma arity in
+    match ESorts.kind sigma s with
+    | SProp | Prop | Set -> TemplateUnivOnly
+    | QSort (q,u) ->
+      if Univ.Level.Set.(is_empty (inter quality_bounded_from_below (Univ.Universe.levels u)))
+      then TemplatePseudoSortPoly
+      else TemplateUnivOnly
+    | Type u -> TemplateUnivOnly
+
 let interp_mutual_inductive_constr ~sigma ~flags ~udecl ~variances ~ctx_params ~indnames ~arities_explicit ~arities ~template_syntax ~constructors ~env_ar_params ~private_ind =
   let {
     poly;
@@ -544,12 +578,27 @@ let interp_mutual_inductive_constr ~sigma ~flags ~udecl ~variances ~ctx_params ~
       constructors
   in
   let sigma, (default_dep_elim, arities) = inductive_levels env_ar_params sigma ~poly ~indnames ~arities_explicit arities ctor_args in
-  let lbound = if poly then UGraph.Bound.Set else UGraph.Bound.Prop in
-  let sigma = Evd.minimize_universes ~lbound sigma in
+  (* we must minimize before inferring template info
+     For instance before minimization "option" is "option : Type@{q|u} -> Type@{v}" with "u <= v"
+     we want to produce "Type@{u} -> Type@{max(Set,u)}" with "u" template poly
+     minimization is what gives us "u = v" *)
+  let sigma = Evd.minimize_universes ~collapse_sort_variables:false sigma in
+  let template_syntax =
+    let maybe_template = not poly && not (Option.equal Bool.equal template (Some false)) in
+    match maybe_template, arities, template_syntax with
+    | true, [arity], [SyntaxAllowsTemplatePoly ()] ->
+      let pseudo_sort_poly = pseudo_sort_poly sigma ctx_params arity in
+      SyntaxAllowsTemplatePoly pseudo_sort_poly
+    | _ ->
+      SyntaxNoTemplatePoly
+  in
+
+  (* collapse qvars for the kernel, evar-normalize and restrict univs *)
+  let sigma = Evd.set_universe_context sigma @@ UState.collapse_sort_variables @@ Evd.ustate sigma in
   let arities = List.map EConstr.(to_constr sigma) arities in
   let constructors = List.map (on_snd (List.map (EConstr.to_constr sigma))) constructors in
   let ctx_params = List.map (fun d -> EConstr.to_rel_decl sigma d) ctx_params in
-  let sigma = restrict_inductive_universes ~lbound sigma ctx_params arities constructors in
+  let sigma = restrict_inductive_universes sigma ctx_params arities constructors in
   let univ_entry, binders = Evd.check_univ_decl ~poly sigma udecl in
 
   (* Build the inductive entries *)
@@ -561,8 +610,8 @@ let interp_mutual_inductive_constr ~sigma ~flags ~udecl ~variances ~ctx_params ~
       })
       indnames arities constructors
   in
-  let univ_entry, ctx = match entries, template_syntax with
-  | [entry], [template_syntax] ->
+  let univ_entry, ctx = match entries with
+  | [entry] ->
     compute_template_inductive ~user_template:template ~ctx_params ~univ_entry entry template_syntax
   | _ ->
     let () = match template with
@@ -841,7 +890,7 @@ let do_mutual_inductive ~flags ?typing_flags udecl indl ~private_ind ~uniform =
   (* Slightly hackish global universe declaration due to template types. *)
   let binders = match mie.mind_entry_universes with
   | Monomorphic_ind_entry -> (UState.Monomorphic_entry uctx, univ_binders)
-  | Template_ind_entry ctx -> (UState.Monomorphic_entry (Univ.ContextSet.union uctx ctx), univ_binders)
+  | Template_ind_entry {univs=ctx} -> (UState.Monomorphic_entry (Univ.ContextSet.union uctx ctx), univ_binders)
   | Polymorphic_ind_entry uctx -> (UState.Polymorphic_entry uctx, UnivNames.empty_binders)
   in
   (* Declare the global universes *)
@@ -897,6 +946,8 @@ module Internal =
 struct
 
 let inductive_levels = inductive_levels
+
+let pseudo_sort_poly = pseudo_sort_poly
 
 let error_differing_params = error_differing_params
 

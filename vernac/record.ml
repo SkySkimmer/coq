@@ -188,6 +188,7 @@ let build_type_telescope ~unconstrained_sorts newps env0 sigma { DataI.arity; _ 
 
 type tc_result =
   Impargs.manual_implicits
+  * Declarations.template_pseudo_sort_poly ComInductive.syntax_allows_template_poly
   (* Part relative to closing the definitions *)
   * UState.named_universes_entry
   * Entries.variance_entry
@@ -249,8 +250,10 @@ let typecheck_params_and_fields def ~poly udecl ps (records : DataI.t list) : tc
   let (sigma, data) = List.fold_left_map fold sigma records in
   let sigma =
     Pretyping.solve_remaining_evars Pretyping.all_and_fail_flags env_ar sigma in
-  let sigma, typs =
-    if def then def_class_levels ~def env_ar sigma aritysorts data
+  let sigma, early_remplate_check, typs =
+    if def then
+      let sigma, typs = def_class_levels ~def env_ar sigma aritysorts data in
+      Evd.minimize_universes sigma, ComInductive.SyntaxNoTemplatePoly, typs
     else (* each inductive has one constructor *)
       let ctors = List.map (fun (_,newfs) -> [newfs]) data in
       let indnames = List.map (fun x -> x.DataI.name) records in
@@ -258,13 +261,20 @@ let typecheck_params_and_fields def ~poly udecl ps (records : DataI.t list) : tc
       let sigma, (default_dep_elim, typs) =
         ComInductive.Internal.inductive_levels env_ar sigma ~poly ~indnames ~arities_explicit typs ctors
       in
-      sigma, List.combine default_dep_elim typs
+      let sigma = Evd.minimize_universes ~collapse_sort_variables:false sigma in
+      let early_template_check =
+        match unconstrained_sorts, typs with
+        | true, [typ] when EConstr.isArity sigma typ ->
+          let early_check = ComInductive.Internal.pseudo_sort_poly sigma newps typ in
+          ComInductive.SyntaxAllowsTemplatePoly early_check
+        | _ -> ComInductive.SyntaxNoTemplatePoly
+      in
+      let sigma = Evd.set_universe_context sigma @@ UState.collapse_sort_variables @@ Evd.ustate sigma in
+      sigma, early_template_check, List.combine default_dep_elim typs
   in
   (* TODO: Have this use Declaredef.prepare_definition *)
-  let lbound = if unconstrained_sorts then UGraph.Bound.Prop else UGraph.Bound.Set in
   let sigma, (newps, ans) =
     (* too complex for Evarutil.finalize as we normalize non-constr *)
-    let sigma = Evd.minimize_universes ~lbound sigma in
     let uvars = ref Univ.Level.Set.empty in
     let nf c =
       let _, varsc = EConstr.universes_of_constr sigma c in
@@ -281,13 +291,13 @@ let typecheck_params_and_fields def ~poly udecl ps (records : DataI.t list) : tc
       { DataR.arity; default_dep_elim; implfs; fields }
     in
     let ans = List.map2 map data typs in
-    let sigma = Evd.restrict_universe_context ~lbound sigma !uvars in
+    let sigma = Evd.restrict_universe_context sigma !uvars in
     sigma, (newps, ans)
   in
   let univs = Evd.check_univ_decl ~poly sigma decl in
   let ce t = Pretyping.check_evars env0 sigma (EConstr.of_constr t) in
   let () = List.iter (iter_constr ce) (List.rev newps) in
-  imps, univs, variances, newps, ans
+  imps, early_remplate_check, univs, variances, newps, ans
 
 type record_error =
   | MissingProj of Id.t * Id.t list
@@ -720,7 +730,7 @@ let pre_process_structure udecl kind ~poly (records : Ast.t list) =
   let indlocs = check_unique_names records in
   let () = check_priorities kind records in
   let ps, data = extract_record_data records in
-  let impargs, univs, variances, params, data =
+  let impargs, early_template_check, univs, variances, params, data =
     (* In theory we should be able to use
        [Notation.with_notation_protection], due to the call to
        Metasyntax.set_notation_for_interpretation, however something
@@ -748,9 +758,9 @@ let pre_process_structure udecl kind ~poly (records : Ast.t list) =
   let data = List.map2 map data records in
   let projections_kind =
     Decls.(match kind_class kind with NotClass -> StructureComponent | _ -> Method) in
-  impargs, params, univs, variances, projections_kind, data, indlocs
+  impargs, params, early_template_check, univs, variances, projections_kind, data, indlocs
 
-let interp_structure_core ~cumulative finite ~univs ~variances ~primitive_proj impargs params template ~projections_kind ~indlocs data =
+let interp_structure_core ~cumulative finite ~early_template_check ~univs ~variances ~primitive_proj impargs params template ~projections_kind ~indlocs data =
   let nparams = List.length params in
   let (univs, ubinders) = univs in
   let poly, projunivs =
@@ -773,8 +783,7 @@ let interp_structure_core ~cumulative finite ~univs ~variances ~primitive_proj i
   let ind_univs, global_univ_decls = match blocks, data with
   | [entry], [data] ->
     ComInductive.compute_template_inductive ~user_template:template
-      ~ctx_params:params ~univ_entry:univs entry
-      (if Term.isArity entry.mind_entry_arity then SyntaxAllowsTemplatePoly else SyntaxNoTemplatePoly)
+      ~ctx_params:params ~univ_entry:univs entry early_template_check
   | _ ->
     begin match template with
     | Some true -> user_err Pp.(str "Template-polymorphism not allowed with mutual records.")
@@ -818,9 +827,9 @@ let interp_structure ~flags udecl kind ~primitive_proj records =
       template;
       finite;
     } = flags in
-  let impargs, params, univs, variances, projections_kind, data, indlocs =
+  let impargs, params, early_template_check, univs, variances, projections_kind, data, indlocs =
     pre_process_structure udecl kind ~poly records in
-  interp_structure_core ~cumulative finite ~univs ~variances ~primitive_proj impargs params template ~projections_kind ~indlocs data
+  interp_structure_core ~cumulative finite ~early_template_check ~univs ~variances ~primitive_proj impargs params template ~projections_kind ~indlocs data
 
 let declare_structure { Record_decl.mie; default_dep_elim; primitive_proj; impls; globnames; global_univ_decls; projunivs; ubinders; projections_kind; poly; records; indlocs } =
   Option.iter Global.push_context_set global_univ_decls;
@@ -1050,7 +1059,7 @@ let definition_structure ~flags udecl kind ~primitive_proj (records : Ast.t list
       template;
       finite;
     } = flags in
-  let impargs, params, univs, variances, projections_kind, data, indlocs =
+  let impargs, params, early_template_check, univs, variances, projections_kind, data, indlocs =
     pre_process_structure udecl kind ~poly records
   in
   let inds, def = match kind_class kind with
@@ -1058,7 +1067,7 @@ let definition_structure ~flags udecl kind ~primitive_proj (records : Ast.t list
     | RecordClass | NotClass ->
       let structure =
         interp_structure_core
-          ~cumulative finite ~univs ~variances ~primitive_proj
+          ~cumulative finite ~early_template_check ~univs ~variances ~primitive_proj
           impargs params template ~projections_kind ~indlocs data in
       declare_structure structure
   in

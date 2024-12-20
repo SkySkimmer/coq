@@ -231,3 +231,33 @@ Module TemplateNoExtraCsts.
   Polymorphic Definition some@{u|} (A:Type@{u}) (x:A) : opt' A := Some x.
 
 End TemplateNoExtraCsts.
+
+Module BoundedQuality.
+  Inductive dumb' (b:bool) (B : Type) := cons' : B -> (b = true -> dumb' false nat) -> dumb' b B.
+
+  (* dumb' true _ contains a nat *)
+  Fail Check dumb' true True : Prop.
+
+  Check dumb' true nat : Set.
+  Fail Check dumb' true Set : Set.
+  Check dumb' true Set.
+End BoundedQuality.
+
+Module UnminimizedOption.
+  Unset Universe Minimization ToSet.
+  Inductive option A := None | Some (_:A).
+
+  Fail Check option True : Prop.
+  Check option nat : Set.
+  Fail Check option Set : Set.
+  Check option Set : Type.
+End UnminimizedOption.
+
+Module ExplicitOption.
+  Inductive option@{u} (A:Type@{u}) : Type@{u} := None | Some (_:A).
+
+  Fail Check option True : Prop.
+  Check option nat : Set.
+  Fail Check option Set : Set.
+  Check option Set : Type.
+End ExplicitOption.

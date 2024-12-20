@@ -49,11 +49,14 @@ let map_decl_arity f g = function
   | TemplateArity a -> TemplateArity (g a)
 
 let hcons_template_arity ar =
-  { template_level = Sorts.hcons ar.template_level; }
+  { template_level = Sorts.hcons ar.template_level;
+  }
 
 let hcons_template_universe ar =
   { template_param_arguments = ar.template_param_arguments;
-    template_context = Univ.hcons_universe_context_set ar.template_context }
+    template_context = Univ.hcons_universe_context_set ar.template_context;
+    template_pseudo_sort_poly = ar.template_pseudo_sort_poly;
+  }
 
 let universes_context = function
   | Monomorphic -> UVars.AbstractContext.empty
