@@ -74,7 +74,7 @@ val interp_mutual_inductive
   -> uniform:uniform_inductive_flag
   -> Mind_decl.t
 
-type syntax_allows_template_poly = SyntaxAllowsTemplatePoly | SyntaxNoTemplatePoly
+type 'a syntax_allows_template_poly = SyntaxAllowsTemplatePoly of 'a | SyntaxNoTemplatePoly
 
 (** the post-elaboration part of interp_mutual_inductive, mainly dealing with
     universe levels *)
@@ -87,7 +87,7 @@ val interp_mutual_inductive_constr
   -> indnames:Names.Id.t list
   -> arities_explicit:bool list
   -> arities:EConstr.t list
-  -> template_syntax:syntax_allows_template_poly list
+  -> template_syntax:unit syntax_allows_template_poly list
   -> constructors:(Names.Id.t list * EConstr.constr list) list
   -> env_ar_params:Environ.env
   (** Environment with the inductives and parameters in the rel_context *)
@@ -103,7 +103,7 @@ val compute_template_inductive
   -> ctx_params:Constr.rel_context
   -> univ_entry:UState.universes_entry
   -> Entries.one_inductive_entry
-  -> syntax_allows_template_poly
+  -> Declarations.template_pseudo_sort_poly syntax_allows_template_poly
   -> Entries.inductive_universes_entry * Univ.ContextSet.t
 (** [compute_template_inductive] computes whether an inductive can be template
     polymorphic. *)
@@ -140,6 +140,11 @@ sig
     -> EConstr.rel_context list list
     (* constructors *)
     -> Evd.evar_map * (DeclareInd.default_dep_elim list * EConstr.t list)
+
+  val pseudo_sort_poly : Evd.evar_map ->
+    EConstr.rel_context ->
+    EConstr.types ->
+    Declarations.template_pseudo_sort_poly
 
   val error_differing_params
     : kind:string
