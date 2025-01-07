@@ -243,6 +243,16 @@ Module BoundedQuality.
   Check dumb' true Set.
 End BoundedQuality.
 
+Module BoundedQuality2.
+  Inductive dumb' (A:Type) (b:bool) (B : Type) := cons' : A -> (b = true -> dumb' A false nat) -> dumb' A b B.
+
+  Check dumb' True true Set : Prop.
+  Fail Check dumb' nat true Set : Prop.
+  Check dumb' nat true Set : Set.
+  Fail Check dumb' Set true Set : Set.
+  Check dumb' Set true Set.
+End BoundedQuality2.
+
 Module UnminimizedOption.
   Unset Universe Minimization ToSet.
   Inductive option A := None | Some (_:A).
@@ -252,6 +262,17 @@ Module UnminimizedOption.
   Fail Check option Set : Set.
   Check option Set : Type.
 End UnminimizedOption.
+
+Module UnminimizedFunction.
+  Unset Universe Minimization ToSet.
+  Inductive Foo (T:Type) := foo (_:nat -> T).
+
+  Check Foo True : Prop.
+  Fail Check Foo nat : Prop.
+  Check Foo nat : Set.
+  Fail Check Foo Set : Set.
+  Check Foo Set : Type.
+End UnminimizedFunction.
 
 Module ExplicitOption.
   Inductive option@{u} (A:Type@{u}) : Type@{u} := None | Some (_:A).
