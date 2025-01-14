@@ -1966,16 +1966,18 @@ let () =
     CWarnings.check_unknown_warnings flags;
     CWarnings.normalize_flags_string flags
   in
-  declare_string_option ~preprocess
-    { optstage = Summary.Stage.Synterp;
+  declare_append_only_option ~preprocess ~sep:","
+    { optkind = StringKind;
+      optstage = Summary.Stage.Synterp;
       optdepr  = None;
       optkey   = ["Warnings"];
       optread  = CWarnings.get_flags;
       optwrite = CWarnings.set_flags }
 
 let () =
-  declare_string_option
-    { optstage = Summary.Stage.Synterp;
+  declare_append_only_option ~sep:","
+    { optkind = StringKind;
+      optstage = Summary.Stage.Synterp;
       optdepr  = None;
       optkey   = ["Debug"];
       optread  = CDebug.get_flags;

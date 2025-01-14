@@ -10,9 +10,6 @@
 
 open Goptions
 
-val vernac_set_append_option :
-  locality:option_locality -> stage:Summary.Stage.t ->option_name -> string -> unit
-
 val vernac_set_option :
   locality:option_locality ->
   stage:Summary.Stage.t ->

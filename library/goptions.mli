@@ -47,6 +47,12 @@
 
 type option_name = string list
 
+type _ option_kind =
+  | BoolKind : bool option_kind
+  | IntKind : int option option_kind
+  | StringKind : string option_kind
+  | StringOptKind : string option option_kind
+
 type option_locality = OptDefault | OptLocal | OptExport | OptGlobal
 
 (** {6 Tables. } *)
@@ -114,11 +120,12 @@ end
    "Print Toto Titi."
 
    The declare_*_option functions are low-level, to be used when
-   implementing complex option workflows, e.g. when setting one option
-   changes the value of another.  For most use cases, you should use
+   implementing complex option workflows, e.g. when the option data is in the global env.
+   For most use cases, you should use
    the helper functions declare_*_option_and_ref. *)
 
 type 'a option_sig = {
+  optkind : 'a option_kind;
   optstage   : Summary.Stage.t;
   optdepr    : Deprecation.t option;
   (** whether the option is DEPRECATED *)
@@ -131,18 +138,45 @@ type 'a option_sig = {
 (** The [preprocess] function is triggered before setting the option. It can be
     used to emit a warning on certain values, and clean-up the final value.
 
-    [declare_stringopt_option] should be preferred to [declare_string_option]
-    because it supports "Unset".
-    Only "Warnings" option is declared using the latter.*)
+    [StringOptKind] should be preferred to [StringKind] because it supports "Unset". *)
+val declare_option   : ?preprocess:('a -> 'a) -> 'a option_sig -> unit
 
-val declare_int_option   : ?preprocess:(int option -> int option) ->
-                           int option option_sig -> unit
-val declare_bool_option  : ?preprocess:(bool -> bool) ->
-                           bool option_sig   -> unit
-val declare_string_option: ?preprocess:(string -> string) ->
-                           string option_sig -> unit
-val declare_stringopt_option: ?preprocess:(string option -> string option) ->
-                              string option option_sig -> unit
+val declare_append_only_option : ?preprocess:(string -> string) -> sep:string ->
+  string option_sig -> unit
+
+(** Unsynchronized options *)
+module RawOpt : sig
+  type 'a t = {
+    kind : 'a option_kind;
+    depr : Deprecation.t option;
+    stage : Summary.Stage.t;
+    read : unit -> 'a;
+    write : option_locality -> 'a -> unit;
+  }
+end
+
+(** Declare an unsynchronized option.
+    This means that [write] is called directly by "Set Foo" (after type casting).
+
+    This is in particular useful to define options which wrap another option,
+    eg suppose "Foo Debug Verbosity" is from [declare_intopt_option_and_ref]
+    and we want to declare a flag "Foo Debug" which when unset will unset "Foo Debug Verbosity",
+    and when set will set "Foo Debug Verbosity" to 1.
+    If we used [declare_option], backtracking would reset "Foo Debug Verbosity" and "Foo Debug"
+    in an undefined order, such that if "Foo Debug Verbosity" was 2
+    if "Foo Debug" is reset later it gets overwritted to 1.
+    ie "Set Foo Debug Verbosity 2. Something unrelated. Undo 1." may result in
+    "Foo Debug Verbosity = 1".
+
+    Therefore instead we should declare "Foo Debug" as an unsynchronized option, which calls
+    [set_int_option_value_gen] on "Foo Debug Verbosity"
+    (NB: the stage in [RawOpt.t] controls in which phase [write] is called).
+*)
+val declare_unsynchronized_option : option_name -> 'a RawOpt.t -> unit
+
+(** Helper to build synchronized options on top of [declare_unsynchronized_option]. *)
+val option_object : string -> Summary.Stage.t -> ('a -> unit) ->
+  (option_locality * 'b, option_locality * 'a, option_locality * 'b) Libobject.object_declaration
 
 (** Helpers to declare a reference controlled by an option. *)
 
@@ -182,7 +216,6 @@ val get_ref_table :
 val set_int_option_value_gen    : ?locality:option_locality -> ?stage:Summary.Stage.t -> option_name -> int option -> unit
 val set_bool_option_value_gen   : ?locality:option_locality -> ?stage:Summary.Stage.t -> option_name -> bool   -> unit
 val set_string_option_value_gen : ?locality:option_locality -> ?stage:Summary.Stage.t -> option_name -> string -> unit
-val set_string_option_append_value_gen : ?locality:option_locality -> ?stage:Summary.Stage.t -> option_name -> string -> unit
 val unset_option_value_gen : ?locality:option_locality -> ?stage:Summary.Stage.t -> option_name -> unit
 
 val set_int_option_value    : ?stage:Summary.Stage.t -> option_name -> int option -> unit
@@ -204,13 +237,14 @@ type table_value =
 (** [get_option_value key] returns [None] if option with name [key] was not found. *)
 val get_option_value : option_name -> (unit -> option_value) option
 
+type 'a check_and_cast = { check_and_cast : 'b. 'a -> 'b option_kind -> 'b }
+
 val set_option_value : ?locality:option_locality -> ?stage:Summary.Stage.t ->
-  ('a -> option_value -> option_value) -> option_name -> 'a -> unit
+  'a check_and_cast -> option_name -> 'a -> unit
 (** [set_option_value ?locality f name v] sets [name] to the result of
-    applying [f] to [v] and [name]'s current value. Use for behaviour
+    applying [f] to [v] and [name]'s option kind. Use for behaviour
     depending on the type of the option, eg erroring when ['a] doesn't
-    match it. Changing the type will result in errors later so don't do
-    that. *)
+    match it. *)
 
 (** Summary of an option status *)
 type option_state = {
@@ -225,3 +259,26 @@ type iter_table_aux = { aux : 'a. 'a table_of_A -> Environ.env -> 'a -> unit }
 val iter_table : Environ.env -> iter_table_aux -> option_name -> table_value list -> unit
 
 val error_undeclared_key : option_name -> 'a
+
+(** Compat *)
+
+module OldSig : sig
+  type 'a t = {
+    optstage   : Summary.Stage.t;
+    optdepr    : Deprecation.t option;
+    (** whether the option is DEPRECATED *)
+    optkey     : option_name;
+    (** the low-level name of this option *)
+    optread    : unit -> 'a;
+    optwrite   : 'a -> unit
+  }
+end
+
+val declare_int_option   : ?preprocess:(int option -> int option) ->
+                           int option OldSig.t -> unit
+val declare_bool_option  : ?preprocess:(bool -> bool) ->
+                           bool OldSig.t   -> unit
+val declare_string_option: ?preprocess:(string -> string) ->
+                           string OldSig.t -> unit
+val declare_stringopt_option: ?preprocess:(string option -> string option) ->
+                              string option OldSig.t -> unit
