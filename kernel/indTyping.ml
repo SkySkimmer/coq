@@ -96,7 +96,9 @@ let check_univ_leq ?(is_real_arg=false) env u info =
       | HasRelevantArg -> info
       | NoRelevantArg -> match u with
         | Sorts.SProp -> info
-        | QSort (q,_) -> if Sorts.Quality.equal (QVar q) (Sorts.quality info.ind_univ)
+        | QSort (q,_) ->
+          if Environ.Internal.is_above_prop env q
+          || Sorts.Quality.equal (QVar q) (Sorts.quality info.ind_univ)
           then { info with record_arg_info = HasRelevantArg }
           else info
         | Prop | Set | Type _ -> { info with record_arg_info = HasRelevantArg }
@@ -109,12 +111,15 @@ let check_univ_leq ?(is_real_arg=false) env u info =
     info
 
   | Prop, SProp -> { info with ind_squashed = Some AlwaysSquashed }
-  | (SProp|Prop), QSort _ -> add_squash (Sorts.quality u) info
+  | (SProp|Prop), QSort (q,_) ->
+    if Environ.Internal.is_above_prop env q then info
+    else add_squash (Sorts.quality u) info
   | Prop, (Prop | Set | Type _) -> info
 
   | Set, (SProp | Prop) -> { info with ind_squashed = Some AlwaysSquashed }
-  | Set, QSort (_, indu) ->
-    if UGraph.check_leq (universes env) Universe.type0 indu
+  | Set, QSort (q, indu) ->
+    if Environ.Internal.is_above_prop env q then info
+    else if UGraph.check_leq (universes env) Universe.type0 indu (* XXX always true *)
     then add_squash qtype info
     else { info with missing = u :: info.missing }
   | Set, Set -> info
@@ -227,6 +232,11 @@ let check_constructors env_ar_par isrecord params lc (arity,indices,univ_info) =
     | _ -> check_univ_leq env_ar_par Sorts.set univ_info
   in
   let univ_info = Array.fold_left (check_constructor_univs env_ar_par) univ_info splayed_lc in
+  let () = if univ_info.ind_template then match univ_info.ind_squashed with
+      | None | Some AlwaysSquashed -> ()
+      | Some (SometimesSquashed _) ->
+      CErrors.user_err Pp.(str "Cannot handle sometimes squashed template polymorphic type.")
+  in
   (* generalize the constructors over the parameters *)
   let lc = Array.map (fun c -> Term.it_mkProd_or_LetIn c params) lc in
   (arity, lc), (indices, splayed_lc), univ_info
