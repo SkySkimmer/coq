@@ -1,0 +1,5 @@
+(library
+ (name ltac2_ssr_plugin)
+ (public_name rocq-runtime.plugins.ltac2_ssr)
+ (synopsis "Ltac2 and SSReflect interoperability plugin")
+ (libraries ltac_plugin ltac2_plugin ltac2_ltac1_plugin ssrmatching_plugin))

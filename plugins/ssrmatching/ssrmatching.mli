@@ -245,6 +245,16 @@ val debug : bool -> unit
 
 val ssrinstancesof : cpattern -> unit Proofview.tactic
 
+(** WIP non cpattern-based functions for ltac2 *)
+
+type 'term interp_pattern_funs = {
+  mkXLetIn : Names.Id.t -> 'term -> 'term;
+  interp_term : Environ.env -> evar_map -> 'term -> evar_map * EConstr.t;
+}
+
+val interp_pattern_gen : 'term interp_pattern_funs ->
+  Environ.env -> Evd.evar_map -> (Names.Id.t, 'term) ssrpattern -> pattern
+
 (** Functions used for grammar extensions. Do not use. *)
 
 module Internal :

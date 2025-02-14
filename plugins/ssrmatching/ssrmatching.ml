@@ -1167,25 +1167,18 @@ let cleanup_XinE env sigma0 (h_k, _) x rp sigma =
       sigma new_evars in
   sigma
 
-let interp_pattern ?wit_ssrpatternarg env sigma0 red redty =
-  pp(lazy(str"interpreting: " ++ pr_rpattern red));
-  let red = decode_pattern ?wit_ssrpatternarg env sigma0 red in
-  let red =
-    match redty with
-    | None -> red
-    | Some ty -> add_pattern_type env sigma0 red ty in
-  let mkXLetIn ?loc x {kind; pattern=(g,c); interpretation} = match c with
-  | Some b -> {kind; pattern=(g,Some (mkCLetIn ?loc x (mkCHole ~loc) b)); interpretation}
-  | None -> { kind
-            ; pattern = DAst.make ?loc @@ GLetIn
-                  (x, None, DAst.make ?loc @@ GHole (GBinderType x), None, g), None
-            ; interpretation} in
+type 'term interp_pattern_funs = {
+  mkXLetIn : Id.t -> 'term -> 'term;
+  interp_term : Environ.env -> evar_map -> 'term -> evar_map * EConstr.t;
+}
+
+let interp_pattern_gen (type term) {mkXLetIn; interp_term} env sigma0 (red:(Id.t, term) ssrpattern) =
   match red with
   | T t -> let sigma, t = interp_term env sigma0 t in { pat_sigma = sigma; pat_pat = T t }
   | In_T t -> let sigma, t = interp_term env sigma0 t in { pat_sigma = sigma; pat_pat = In_T t }
   | X_In_T (x, rp) | In_X_In_T (x, rp)
   | E_In_X_In_T(_, x, rp) | E_As_X_In_T (_, x, rp) ->
-    let rp = mkXLetIn (Name x) rp in
+    let rp = mkXLetIn x rp in
     let sigma, rp = interp_term env sigma0 rp in
     let _, h, _, rp = EConstr.destLetIn sigma rp in
     let h = EConstr.destEvar sigma h in
@@ -1203,6 +1196,31 @@ let interp_pattern ?wit_ssrpatternarg env sigma0 red redty =
       | T _ | In_T _ -> assert false
     in
     { pat_sigma = sigma; pat_pat = p }
+
+let cpattern_funs =
+  let mkXLetIn x {kind; pattern=(g,c); interpretation} =
+    let x = Name x in
+    match c with
+    | Some b -> {kind; pattern=(g,Some (mkCLetIn x (mkCHole ~loc:None) b)); interpretation}
+    | None ->
+      { kind
+      ; pattern = DAst.make @@ GLetIn
+            (x, None, DAst.make @@ GHole (GBinderType x), None, g), None
+      ; interpretation}
+  in
+  {
+    interp_term;
+    mkXLetIn;
+  }
+
+let interp_pattern ?wit_ssrpatternarg env sigma0 red redty =
+  pp(lazy(str"interpreting: " ++ pr_rpattern red));
+  let red = decode_pattern ?wit_ssrpatternarg env sigma0 red in
+  let red =
+    match redty with
+    | None -> red
+    | Some ty -> add_pattern_type env sigma0 red ty in
+  interp_pattern_gen cpattern_funs env sigma0 red
 
 let interp_cpattern env sigma red redty = interp_pattern env sigma (T red) redty;;
 let interp_rpattern ~wit_ssrpatternarg env sigma red = interp_pattern ~wit_ssrpatternarg env sigma red None;;
