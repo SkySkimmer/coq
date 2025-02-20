@@ -33,7 +33,7 @@ val declare_local
   -> univs:UState.named_universes_entry
   -> impargs:Impargs.manual_implicits
   -> impl:Glob_term.binding_kind
-  -> name:variable
+  -> variable
   -> Constr.constr option
   -> Constr.types
   -> GlobRef.t * UVars.Instance.t
@@ -47,7 +47,7 @@ val declare_axiom
   -> univs:UState.named_universes_entry
   -> impargs:Impargs.manual_implicits
   -> inline:Declaremods.inline
-  -> name:variable
+  -> name:lident
   -> Constr.types
   -> GlobRef.t * UVars.Instance.t
 
@@ -61,7 +61,7 @@ val declare_global
   -> univs:UState.named_universes_entry
   -> impargs:Impargs.manual_implicits
   -> inline:Declaremods.inline
-  -> name:variable
+  -> lident
   -> Constr.constr option
   -> Constr.types
   -> GlobRef.t * UVars.Instance.t
